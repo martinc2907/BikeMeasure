@@ -1,15 +1,23 @@
 package com.example.chong.bikemeasure;
 
 import android.app.ActionBar;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.ActivityInfo;
 import android.hardware.Camera;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.location.LocationManager;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
+import android.os.IBinder;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -19,6 +27,7 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -37,6 +46,32 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     private Button startRecording = null;
     private boolean recording = false;
     SimpleDateFormat dateFormat = new SimpleDateFormat("EEE MMM dd hh mm ss");
+
+
+    //Speed stuff
+    LocationService myService;
+    static boolean status;
+    LocationManager locationManager;
+    static TextView dist, time, speed;
+    Button start, pause, stop;
+    static long startTime, endTime;
+    ImageView image;
+    static ProgressDialog locate;
+    static int p = 0;
+    private ServiceConnection sc = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            LocationService.LocalBinder binder = (LocationService.LocalBinder) service;
+            myService = binder.getService();
+            status = true;
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            status = false;
+        }
+    };
+
 
     //For video
     File video;
@@ -58,11 +93,11 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     File file3;
     FileOutputStream fos3;
 
+    //For speed
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
 
         //Create directories if non-existent.
         File bikedir = new File("/sdcard","Bike Project");
@@ -72,12 +107,13 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
         File gyrodir = new File("/sdcard/Bike Project", "Gyro");
         File compassdir = new File("/sdcard/Bike Project", "Compass");
         File acceldir = new File("/sdcard/Bike Project", "Accel");
-
+        File speedir = new File("/sdcard/Bike Project", "Speed");
 
         videodir.mkdirs();
         gyrodir.mkdirs();
         compassdir.mkdirs();
         acceldir.mkdirs();
+        speedir.mkdirs();
 
 
         //window features
@@ -121,6 +157,10 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
                     tv.setVisibility(View.INVISIBLE);
                     button.setText("START");
+
+                    //speed.
+                    if (status == true)
+                        unbindService();
 
                     mrec.stop();
                     mrec.release();
@@ -180,6 +220,24 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
                         e.printStackTrace();
                     }
                     mSensorManager.registerListener(MainActivity.this, mCompass, SensorManager.SENSOR_DELAY_NORMAL);
+
+
+                    //Speed
+                    locate = new ProgressDialog(MainActivity.this);
+                    locate.setIndeterminate(true);
+                    locate.setCancelable(false);
+                    locate.setMessage("Getting Location...");
+                    locate.show();
+
+                    checkGps();
+                    locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+                    if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                        return;
+                    }
+                    if(status == false){
+                        bindService(fileName);
+                    }
+
                 }
             }
         });
@@ -208,6 +266,22 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     }
 
     @Override
+    public void onDestroy(){
+        super.onDestroy();
+        if(status == true)
+            unbindService();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (status == false)
+            super.onBackPressed();
+        else
+            moveTaskToBack(true);
+    }
+
+
+    @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width,
                                int height) {
 
@@ -215,14 +289,6 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-//        if (mCamera != null){
-//            Policy.Parameters params = (Policy.Parameters) mCamera.getParameters();
-//            mCamera.setParameters((Camera.Parameters) params);
-//        }
-//        else {
-//            Toast.makeText(getApplicationContext(), "Camera not available!", Toast.LENGTH_LONG).show();
-//            finish();
-//        }
     }
 
     @Override
@@ -302,5 +368,59 @@ public class MainActivity extends AppCompatActivity implements SurfaceHolder.Cal
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
 
+    }
+
+    void bindService(String fileName) {
+        if (status == true)
+            return;
+        Intent i = new Intent(getApplicationContext(), LocationService.class);
+        i.putExtra("fileName", fileName);
+        bindService(i, sc, BIND_AUTO_CREATE);
+        status = true;
+        startTime = System.currentTimeMillis();
+    }
+
+    void unbindService() {
+        if (status == false)
+            return;
+        Intent i = new Intent(getApplicationContext(), LocationService.class);
+        unbindService(sc);
+        status = false;
+    }
+
+
+
+
+
+    //This method leads you to the alert dialog box.
+    void checkGps() {
+        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+
+
+            showGPSDisabledAlertToUser();
+        }
+    }
+    private void showGPSDisabledAlertToUser() {
+        AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(this);
+        alertDialogBuilder.setMessage("Enable GPS to use application")
+                .setCancelable(false)
+                .setPositiveButton("Enable GPS",
+                        new DialogInterface.OnClickListener() {
+                            public void onClick(DialogInterface dialog, int id) {
+                                Intent callGPSSettingIntent = new Intent(
+                                        android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                                startActivity(callGPSSettingIntent);
+                            }
+                        });
+        alertDialogBuilder.setNegativeButton("Cancel",
+                new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int id) {
+                        dialog.cancel();
+                    }
+                });
+        AlertDialog alert = alertDialogBuilder.create();
+        alert.show();
     }
 }
